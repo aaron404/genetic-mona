@@ -32,6 +32,8 @@ frag_shader = """
 #version 450
 smooth in vec4 color_out;
 
+uniform sampler2D image;
+
 out vec4 outputColor;
 
 void main()
@@ -56,19 +58,41 @@ class Controller():
 
         self.pos_id = gl.glGetAttribLocation(self.shader, b'position')
         self.col_id = gl.glGetAttribLocation(self.shader, b'color')
-
+        self.img_id = gl.glGetUniformLocation(self.shader, b'image')
         # create texture
         self.texture_id = gl.glGenTextures(1)
-        self.img = Image.open("mona.jpg")
+        self.img = Image.open(image_path)
         self.img_data = self.img.tobytes()
         self.w = self.img.width * scale
         self.h = self.img.height * scale
 
         # create framebuffer for off-screen rendering
         self.frame_buffer = None
-        #self._init_frame_buffer()
+        self._init_frame_buffer()
+        self._init_image()
+        self._init_texture()
 
         self._init_gl()
+
+    def _init_image(self):
+        """Setup GL texture from image"""
+        # TODO: move image loading/scaling here
+        img = self.img.transpose(Image.FLIP_TOP_BOTTOM)
+        img = img.convert("RGBA")
+        img_data = np.array(list(img.getdata()), dtype=np.uint8)
+
+        self.image_texture = gl.glGenTextures(1)
+        gl.glEnable(gl.GL_TEXTURE_2D)
+        gl.glBindTexture(gl.GL_TEXTURE_2D, self.image_texture)
+
+        gl.glPixelStorei(gl.GL_UNPACK_ALIGNMENT, 1)
+        gl.glTexParameterf(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_S, gl.GL_CLAMP)
+        gl.glTexParameterf(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_T, gl.GL_CLAMP)
+        gl.glTexParameterf(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_LINEAR)
+        gl.glTexParameterf(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_LINEAR)
+        gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGBA, self.w, self.h, 0, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, None)
+
+        gl.glFramebufferTexture2D(gl.GL_FRAMEBUFFER, gl.GL_COLOR_ATTACHMENT0, gl.GL_TEXTURE_2D, self.image_texture, 0)
 
     def _init_frame_buffer(self):
         
@@ -86,8 +110,17 @@ class Controller():
         if status != gl.GL_FRAMEBUFFER_COMPLETE:
             print("Error initializing framebuffer")
             exit()
-        
 
+        gl.glViewport(0, 0, self.w, self.h)
+
+    def _init_texture(self):
+        gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0)
+        gl.glActiveTexture(gl.GL_TEXTURE0)
+        gl.glBindTexture(gl.GL_TEXTURE_2D, self.image_texture)
+        index = gl.glGetUniformLocation(self.shader, "image")
+        gl.glUniform1i(index, 0)
+
+        
     def _init_vertex_buffers(self):
 
         self.vert_data_buffer = gl.glGenBuffers(1)
