@@ -90,7 +90,7 @@ class Controller():
         self.verts_per_gene = self.num_tris * 3
         self.floats_per_gene = self.verts_per_gene * 6
 
-        self.vert_data = np.random.rand(self.floats_per_pop).astype(np.float32) * 0.01 + 0.5
+        self.vert_data = np.random.rand(self.floats_per_pop).astype(np.float32)
         print(self.vert_data.size)
 
 
@@ -253,7 +253,7 @@ class Controller():
     def _mutate(self, index):
         """Apply mutations to the gene specified by index"""
         best = self.vert_data[self.best_gene * self.floats_per_gene:(self.best_gene + 1) * self.floats_per_gene]
-        mutation = (np.random.rand(self.floats_per_gene).astype(np.float32) - 0.5) * 2 * self.mutation_amount # random between +/- mutation amount
+        mutation = (np.random.rand(self.floats_per_gene).astype(np.float32) - 1.0) * 2 * self.mutation_amount * 0.01 # random between +/- mutation amount
         mutation *= np.random.rand(self.floats_per_gene) > self.mutation_rate # multiply by mutation mask
         self.vert_data[index*self.floats_per_gene:(index+1)*self.floats_per_gene] = best + mutation
 
