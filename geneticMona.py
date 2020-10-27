@@ -25,7 +25,7 @@ out vec4 color_out;
 void main() {
     gl_Position = vec4(position.xyz * 2 - 1, 1);
     color_out = color;
-    color_out.w = 0.15;
+    color_out.w = 0.25;
 }
 """,
     "frag": """
@@ -65,66 +65,6 @@ void main() {
 """,
 }
 
-vert_shader = """
-#version 450
-layout(location = 0) in vec4 position;
-layout(location = 1) in vec4 color;
-
-out vec4 color_out;
-
-void main()
-{
-   gl_Position = vec4(position.xyz * 2 - 1, 1);
-   color_out = color;
-   //color_out.w = 1.0;
-}
-"""
-
-frag_shader = """
-#version 450
-layout(location = 0) uniform sampler2D image;
-layout(location = 1) uniform sampler2D framebuffer;
-layout(location = 2) uniform vec2 resolution;
-layout(location = 3) uniform int draw_diff;
-smooth in vec4 color_out;
-
-out vec4 outputColor;
-
-void main()
-{
-    outputColor = color_out - texture(image, gl_FragCoord.xy / resolution);
-    outputColor.w = 1.0;
-    //outputColor *= outputColor;
-}
-"""
-
-
-copy_vert_shader = """
-#version 450
-layout(location = 0) in vec2 position;
-layout(location = 1) in vec2 iTexCoords;
-
-out vec2 oTexCoords;
-
-void main() {
-    gl_Position = vec4(position, 0.0, 1.0);
-    oTexCoords = iTexCoords;
-}
-"""
-copy_frag_shader = """
-#version 450
-
-out vec4 fragColor;
-in vec2 iTexCoords;
-uniform sampler2D screenTexture;
-uniform vec2 iResolution;
-
-void main() {
-    fragColor = texture(screenTexture, gl_FragCoord.xy / iResolution);
-    //fragColor.x = gl_FragCoord.x / iResolution.x;
-}
-"""
-
 class Controller():
 
     def __init__(self, image=None, scale=1):
@@ -132,9 +72,9 @@ class Controller():
         self.population_size = 30
         self.elite_pool_size = 1
         self.random_pool_size = 2
-        self.crossover_rate  = 0.5
+        self.crossover_rate  = 0.95
         self.mutation_rate   = 0.25
-        self.mutation_amount = 0.005
+        self.mutation_amount = 0.025
 
         self.num_tris = 24
         self.tris_per_pop = self.num_tris * self.population_size
@@ -160,11 +100,6 @@ class Controller():
         self.best_score = 1000000000000
 
         # GL stuff #
-        # shader to draw triangles + image to framebuffer
-        self.shader = shaders.compileProgram(
-            shaders.compileShader(vert_shader, gl.GL_VERTEX_SHADER),
-            shaders.compileShader(frag_shader, gl.GL_FRAGMENT_SHADER)
-        )
         # shader to draw triangles to framebuffer
         self.triangle_shader = shaders.compileProgram(
             shaders.compileShader(triangle_shader["vert"], gl.GL_VERTEX_SHADER),
@@ -175,15 +110,10 @@ class Controller():
             shaders.compileShader(ssd_shader["vert"], gl.GL_VERTEX_SHADER),
             shaders.compileShader(ssd_shader["frag"], gl.GL_FRAGMENT_SHADER)
         )
-        # shader to copy offscreen framebuffer to main framebuffer
-        self.copy_shader = shaders.compileProgram(
-            shaders.compileShader(copy_vert_shader, gl.GL_VERTEX_SHADER),
-            shaders.compileShader(copy_frag_shader, gl.GL_FRAGMENT_SHADER)
-        )
 
         # shader attribute indices
-        self.pos_id = gl.glGetAttribLocation(self.shader, b'position')
-        self.col_id = gl.glGetAttribLocation(self.shader, b'color')
+        self.pos_id = gl.glGetAttribLocation(self.triangle_shader, b'position')
+        self.col_id = gl.glGetAttribLocation(self.triangle_shader, b'color')
         self.image_id = gl.glGetUniformLocation(self.ssd_shader, b'image_texture')
         self.frame_id = gl.glGetUniformLocation(self.ssd_shader, b'frame_texture')
         self.res_id = gl.glGetUniformLocation(self.ssd_shader, b"resolution")
@@ -193,8 +123,6 @@ class Controller():
 
         # create framebuffer for off-screen rendering
         self.frame_buffer = None
-        #self._init_texture()
-        #self._init_frame_buffer()
         self._init_buffers()
         self._init_vertex_buffers()
         #self._init_image()
@@ -207,44 +135,6 @@ class Controller():
         img = self.img.transpose(Image.FLIP_TOP_BOTTOM)
         img = img.convert("RGBA")
         return np.array(list(img.getdata()), dtype=np.uint8)
-
-    def _init_texture(self):
-        img = self.img.transpose(Image.FLIP_TOP_BOTTOM)
-        img = img.convert("RGBA")
-        img_data = np.array(list(img.getdata()), dtype=np.uint8)
-
-        self.image_texture = gl.glGenTextures(1)
-        gl.glActiveTexture(gl.GL_TEXTURE0)
-        gl.glBindTexture(gl.GL_TEXTURE_2D, self.image_texture)
-
-        gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_LINEAR)
-        gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_LINEAR)
-        gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_S, gl.GL_CLAMP_TO_BORDER)
-        gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_T, gl.GL_CLAMP_TO_BORDER)
-
-        gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGBA, self.w, self.h, 0, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, img_data)
-        gl.glBindTexture(gl.GL_TEXTURE_2D, 0)
-
-
-    def _init_frame_buffer(self):
-        """Initialize the framebuffer used for offscreen rendering"""
-
-        self.frame_buffer = gl.glGenFramebuffers(1)
-        color_buffer = gl.glGenRenderbuffers(1)
-        gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.frame_buffer)
-        gl.glBindRenderbuffer(gl.GL_RENDERBUFFER, color_buffer)
-        gl.glRenderbufferStorage(gl.GL_RENDERBUFFER, gl.GL_RGBA, self.w, self.h)
-        gl.glFramebufferRenderbuffer(gl.GL_FRAMEBUFFER,
-                                    gl.GL_COLOR_ATTACHMENT0,
-                                    gl.GL_RENDERBUFFER,
-                                    color_buffer)
-
-        status = gl.glCheckFramebufferStatus(gl.GL_FRAMEBUFFER)
-        if status != gl.GL_FRAMEBUFFER_COMPLETE:
-            print("Error initializing framebuffer")
-            exit()
-
-        gl.glViewport(0, 0, self.w, self.h)
 
     def _init_buffers(self):
         self.image_texture   = gl.glGenTextures(1)     # texture storing input image
@@ -317,8 +207,8 @@ class Controller():
     def _init_gl(self):
         gl.glClearColor(0.0, 0.0, 0.0, 1.0)
         gl.glEnable(gl.GL_BLEND)
-        gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_DST_ALPHA)
-        #gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA)
+        #gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_DST_ALPHA)
+        gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA)
         gl.glViewport(0, 0, glut.glutGet(glut.GLUT_WINDOW_WIDTH), glut.glutGet(glut.GLUT_WINDOW_HEIGHT))
 
     def resize(self, width, height):
@@ -357,7 +247,7 @@ class Controller():
         gl.glUniform2f(self.res_id, self.w, self.h)
 
         # TODO: use vertex array
-        #gl.glBindVertexArray(self.quad_vao)
+        gl.glBindVertexArray(self.quad_vao)
         gl.glBegin(gl.GL_QUADS)
         gl.glVertex4f(0, 0, 0, 1)
         gl.glVertex4f(0, 1, 0, 1)
@@ -366,8 +256,6 @@ class Controller():
         gl.glEnd()
         #gl.glDrawArrays(gl.GL_TRIANGLES, 0, 6)
         gl.glUseProgram(0)
-
-        #gl.glBlitNamedFramebuffer(self.frame_buffer2, 0, 0, 0, self.w, self.h, 0, 0, self.w, self.h, gl.GL_COLOR_BUFFER_BIT, gl.GL_NEAREST)
 
         gl.glFlush()
 
@@ -418,20 +306,13 @@ class Controller():
     def step(self):
         # get fitness scores for population
         fitness_scores = sorted([(i, self._get_fitness(i)) for i in range(self.population_size)], key=lambda x: x[1])
-
         self.best_gene = fitness_scores[0][0]
         best_score = fitness_scores[0][1]
         if best_score < self.best_score:
             self.best_score = best_score
-            #print(self.best_gene, self.best_score / (self.w * self.h))
 
-        # # mutate the peasants
-        # for i in range(self.elite_pool_size, self.population_size - self.random_pool_size):
-        #     self._mutate(fitness_scores[i][0])
-        # for i in range(self.population_size - self.random_pool_size, self.population_size):
-        #     self._randomize(fitness_scores[i][0])
+        # perform mutations on all the genes except for the elites        
         for i in range(self.elite_pool_size, self.population_size):
-        #for i in range(0, self.population_size):
             index = fitness_scores[i][0]
             if random.random() < self.crossover_rate:
                 if random.random() < 0.5:
@@ -443,10 +324,9 @@ class Controller():
                     self._mutate_perturb(index)
                 else:
                     self._mutate_random(index)
+        
+        # clamp values to [0,1]
         self.vert_data = np.clip(self.vert_data, 0, 1)
-        #r = np.random.rand(self.floats_per_pop)
-        #self.vert_data[self.vert_data > 1.0] = 0.5 #np.random.rand(self.floats_per_pop)
-        #self.vert_data[self.vert_data < 0.0] = 0.5 #np.random.rand(self.floats_per_pop)
 
         # update data buffer
         gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.vert_data_buffer)
@@ -456,6 +336,7 @@ class Controller():
         self.gen_count += 1
         if self.gen_count % 100 == 0:
             glut.glutSetWindowTitle(u"glMona - {}".format(self.gen_count / (time.time() - self.t0)))
+
         glut.glutPostRedisplay()
 
 
@@ -479,19 +360,12 @@ class Controller():
         gl.glUseProgram(0)
 
         gl.glFlush()
-        #pdb.set_trace()
 
         self.frame_count += 1
-        #if self.frame_count % 1000 == 0:
-        #    glut.glutSetWindowTitle(u"glMona - {}".format(self.frame_count / (time.time() - self.t0)))
-
-        # float colors python sum 83.90426205358702
-        # float colors numpy sum  399.39343067326814
 
 
 def idle_cb():
     controller.step()
-    #glut.glutPostRedisplay()
 
 def keyboard_cb(key, x, y):
     if key == b'q':
