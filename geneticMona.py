@@ -1,5 +1,6 @@
 import ctypes
 import os
+import random
 import sys
 import time
 
@@ -24,7 +25,7 @@ out vec4 color_out;
 void main() {
     gl_Position = vec4(position.xyz * 2 - 1, 1);
     color_out = color;
-    color_out.w = 1.0;
+    color_out.w = 0.15;
 }
 """,
     "frag": """
@@ -33,7 +34,7 @@ smooth in vec4 color_out;
 out vec4 outputColor;
 void main() {
     outputColor = color_out;
-    outputColor.w = 1.0;
+    //outputColor.w = 1.0;
 }
 """,
 }
@@ -75,7 +76,7 @@ void main()
 {
    gl_Position = vec4(position.xyz * 2 - 1, 1);
    color_out = color;
-   color_out.w = 1.0;
+   //color_out.w = 1.0;
 }
 """
 
@@ -128,13 +129,14 @@ class Controller():
 
     def __init__(self, image=None, scale=1):
 
-        self.population_size = 12
+        self.population_size = 30
         self.elite_pool_size = 1
         self.random_pool_size = 2
-        self.mutation_rate   = 0.001
-        self.mutation_amount = 0.01
+        self.crossover_rate  = 0.5
+        self.mutation_rate   = 0.25
+        self.mutation_amount = 0.005
 
-        self.num_tris = 30
+        self.num_tris = 24
         self.tris_per_pop = self.num_tris * self.population_size
         self.verts_per_pop = self.tris_per_pop * 3
         self.floats_per_pop = self.verts_per_pop * 6    # (2 for position, 4 for RGBA)
@@ -142,6 +144,9 @@ class Controller():
         self.floats_per_gene = self.verts_per_gene * 6
 
         self.vert_data = np.random.rand(self.floats_per_pop).astype(np.float32)
+        for i in range(self.floats_per_pop):
+            if (i % 6 == 5):
+                self.vert_data[i] = 0.1
         print(self.vert_data.size)
 
 
@@ -313,6 +318,7 @@ class Controller():
         gl.glClearColor(0.0, 0.0, 0.0, 1.0)
         gl.glEnable(gl.GL_BLEND)
         gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_DST_ALPHA)
+        #gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA)
         gl.glViewport(0, 0, glut.glutGet(glut.GLUT_WINDOW_WIDTH), glut.glutGet(glut.GLUT_WINDOW_HEIGHT))
 
     def resize(self, width, height):
@@ -329,9 +335,9 @@ class Controller():
         gl.glUseProgram(self.triangle_shader)
         gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.vert_data_buffer)
         gl.glEnableVertexAttribArray(self.pos_id)
-        gl.glVertexAttribPointer(0, 2, gl.GL_FLOAT, False, 0, ctypes.c_void_p(0))
+        gl.glVertexAttribPointer(0, 2, gl.GL_FLOAT, False, 24, ctypes.c_void_p(0))
         gl.glEnableVertexAttribArray(self.col_id)
-        gl.glVertexAttribPointer(1, 4, gl.GL_FLOAT, False, 0, ctypes.c_void_p(0))
+        gl.glVertexAttribPointer(1, 4, gl.GL_FLOAT, False, 24, ctypes.c_void_p(8))
 
         gl.glDrawArrays(gl.GL_TRIANGLES, index * self.verts_per_gene, self.verts_per_gene)
         gl.glDisableVertexAttribArray(self.col_id)
@@ -375,15 +381,39 @@ class Controller():
 
         return fitness
 
-    def _mutate(self, index):
-        """Apply mutations to the gene specified by index"""
+    def _mutate_perturb(self, index):
+        """Apply subtle mutations to the gene specified by index"""
         best = self.vert_data[self.best_gene * self.floats_per_gene:(self.best_gene + 1) * self.floats_per_gene]
         mutation = (np.random.rand(self.floats_per_gene).astype(np.float32) - 0.5) * 2 * self.mutation_amount# random between +/- mutation amount
-        mutation *= np.random.rand(self.floats_per_gene) > self.mutation_rate # multiply by mutation mask
+        mutation *= np.random.rand(self.floats_per_gene) < self.mutation_rate # multiply by mutation mask
+        #pdb.set_trace()
         self.vert_data[index*self.floats_per_gene:(index+1)*self.floats_per_gene] = best + mutation
 
-    def _randomize(self, index):
+    def _mutate_random(self, index):
+        """Fully randomize the gene"""
         self.vert_data[index * self.floats_per_gene:(index + 1) * self.floats_per_gene] = np.random.rand(self.floats_per_gene)
+
+    def _mutate_crossover_1p(self, index):
+        """A crossover point is randomly selected. Use parent1 gene before this point and parent2 gene after"""
+        # TODO: create second view of vert data with floats_per_gene stride
+        crossover_point = random.randint(0, self.floats_per_gene)
+        parent1 = random.randint(0, self.population_size - 1)
+        parent2 = random.randint(0, self.population_size - 1)
+        child = index
+        self.vert_data[child * self.floats_per_gene:(child + 1) * self.floats_per_gene - crossover_point] = \
+            self.vert_data[parent1 * self.floats_per_gene:(parent1 + 1) * self.floats_per_gene - crossover_point]
+        self.vert_data[child * self.floats_per_gene + crossover_point:(child + 1) * self.floats_per_gene] = \
+            self.vert_data[parent2 * self.floats_per_gene + crossover_point:(parent2 + 1) * self.floats_per_gene]
+
+    def _mutate_crossover_random(self, index):
+        """Randomly choose from parent1 and parent2 traits"""
+        parent1 = random.randint(0, self.population_size - 1)
+        parent2 = random.randint(0, self.population_size - 1)
+        mask    = np.random.rand(self.floats_per_gene)
+        self.vert_data[index * self.floats_per_gene:(index + 1) * self.floats_per_gene][mask > 0.5] = \
+            self.vert_data[parent1 * self.floats_per_gene:(parent1 + 1) * self.floats_per_gene][mask > 0.5]
+        self.vert_data[index * self.floats_per_gene:(index + 1) * self.floats_per_gene][mask < 0.5] = \
+            self.vert_data[parent2 * self.floats_per_gene:(parent2 + 1) * self.floats_per_gene][mask < 0.5]
 
     def step(self):
         # get fitness scores for population
@@ -393,23 +423,40 @@ class Controller():
         best_score = fitness_scores[0][1]
         if best_score < self.best_score:
             self.best_score = best_score
-            print(self.best_gene, self.best_score)
-            glut.glutPostRedisplay()
+            #print(self.best_gene, self.best_score / (self.w * self.h))
 
-        # mutate the peasants
-        for i in range(self.elite_pool_size, self.population_size - self.random_pool_size):
-            self._mutate(fitness_scores[i][0])
-        for i in range(self.population_size - self.random_pool_size, self.population_size):
-            self._randomize(fitness_scores[i][0])
+        # # mutate the peasants
+        # for i in range(self.elite_pool_size, self.population_size - self.random_pool_size):
+        #     self._mutate(fitness_scores[i][0])
+        # for i in range(self.population_size - self.random_pool_size, self.population_size):
+        #     self._randomize(fitness_scores[i][0])
+        for i in range(self.elite_pool_size, self.population_size):
+        #for i in range(0, self.population_size):
+            index = fitness_scores[i][0]
+            if random.random() < self.crossover_rate:
+                if random.random() < 0.5:
+                    self._mutate_crossover_1p(index)
+                else:
+                    self._mutate_crossover_random(index)
+            else:
+                if random.random() < 0.95:
+                    self._mutate_perturb(index)
+                else:
+                    self._mutate_random(index)
         self.vert_data = np.clip(self.vert_data, 0, 1)
+        #r = np.random.rand(self.floats_per_pop)
+        #self.vert_data[self.vert_data > 1.0] = 0.5 #np.random.rand(self.floats_per_pop)
+        #self.vert_data[self.vert_data < 0.0] = 0.5 #np.random.rand(self.floats_per_pop)
 
+        # update data buffer
         gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.vert_data_buffer)
         gl.glBufferData(gl.GL_ARRAY_BUFFER, self.vert_data.nbytes, (gl.GLfloat * self.vert_data.size)(*self.vert_data), gl.GL_DYNAMIC_DRAW)
         gl.glBindBuffer(gl.GL_ARRAY_BUFFER, 0)
 
         self.gen_count += 1
-        if self.gen_count % 10 == 0:
+        if self.gen_count % 100 == 0:
             glut.glutSetWindowTitle(u"glMona - {}".format(self.gen_count / (time.time() - self.t0)))
+        glut.glutPostRedisplay()
 
 
     def draw(self):
@@ -422,9 +469,9 @@ class Controller():
         gl.glUseProgram(self.triangle_shader)
         gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.vert_data_buffer)
         gl.glEnableVertexAttribArray(self.pos_id)
-        gl.glVertexAttribPointer(0, 2, gl.GL_FLOAT, False, 0, ctypes.c_void_p(0))
+        gl.glVertexAttribPointer(0, 2, gl.GL_FLOAT, False, 24, ctypes.c_void_p(0))
         gl.glEnableVertexAttribArray(self.col_id)
-        gl.glVertexAttribPointer(1, 4, gl.GL_FLOAT, False, 0, ctypes.c_void_p(0))
+        gl.glVertexAttribPointer(1, 4, gl.GL_FLOAT, False, 24, ctypes.c_void_p(8))
 
         gl.glDrawArrays(gl.GL_TRIANGLES, self.best_gene * self.verts_per_gene, self.verts_per_gene)
         gl.glDisableVertexAttribArray(self.col_id)
@@ -432,6 +479,7 @@ class Controller():
         gl.glUseProgram(0)
 
         gl.glFlush()
+        #pdb.set_trace()
 
         self.frame_count += 1
         #if self.frame_count % 1000 == 0:
