@@ -72,11 +72,11 @@ class Controller():
         self.population_size = 30
         self.elite_pool_size = 1
         self.random_pool_size = 2
-        self.crossover_rate  = 0.95
+        self.crossover_rate  = 0.25
         self.mutation_rate   = 0.25
         self.mutation_amount = 0.025
 
-        self.num_tris = 24
+        self.num_tris = 50
         self.tris_per_pop = self.num_tris * self.population_size
         self.verts_per_pop = self.tris_per_pop * 3
         self.floats_per_pop = self.verts_per_pop * 6    # (2 for position, 4 for RGBA)
