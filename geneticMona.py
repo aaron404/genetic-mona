@@ -25,7 +25,7 @@ out vec4 color_out;
 void main() {
     gl_Position = vec4(position.xyz * 2 - 1, 1);
     color_out = color;
-    color_out.w = 0.25;
+    color_out.w = 1.0;
 }
 """,
     "frag": """
@@ -34,7 +34,7 @@ smooth in vec4 color_out;
 out vec4 outputColor;
 void main() {
     outputColor = color_out;
-    //outputColor.w = 1.0;
+    outputColor.w = 0.25;
 }
 """,
 }
@@ -72,23 +72,27 @@ class Controller():
         self.population_size = 30
         self.elite_pool_size = 1
         self.random_pool_size = 2
-        self.crossover_rate  = 0.25
+        self.crossover_rate  = 0.75
         self.mutation_rate   = 0.25
         self.mutation_amount = 0.025
 
-        self.num_tris = 50
-        self.tris_per_pop = self.num_tris * self.population_size
-        self.verts_per_pop = self.tris_per_pop * 3
-        self.floats_per_pop = self.verts_per_pop * 6    # (2 for position, 4 for RGBA)
-        self.verts_per_gene = self.num_tris * 3
-        self.floats_per_gene = self.verts_per_gene * 6
+        self.num_tris = 64
 
+        # useful numbers to have
+        self.tris_per_gene   = self.num_tris
+        self.tris_per_pop    = self.num_tris * self.population_size
+        self.verts_per_gene  = self.tris_per_gene * 3
+        self.verts_per_pop   = self.tris_per_pop  * 3
+        self.floats_per_gene = self.verts_per_gene * 6    # (2 for position, 4 for RGBA)
+        self.floats_per_pop  = self.verts_per_pop  * 6
+ 
         self.vert_data = np.random.rand(self.floats_per_pop).astype(np.float32)
         for i in range(self.floats_per_pop):
             if (i % 6 == 5):
                 self.vert_data[i] = 0.1
         print(self.vert_data.size)
 
+        self.verts_by_gene = self.vert_data.reshape((self.population_size, self.num_tris, 3, 6))
 
         # State info
         self.img = image
@@ -274,34 +278,31 @@ class Controller():
         best = self.vert_data[self.best_gene * self.floats_per_gene:(self.best_gene + 1) * self.floats_per_gene]
         mutation = (np.random.rand(self.floats_per_gene).astype(np.float32) - 0.5) * 2 * self.mutation_amount# random between +/- mutation amount
         mutation *= np.random.rand(self.floats_per_gene) < self.mutation_rate # multiply by mutation mask
-        #pdb.set_trace()
         self.vert_data[index*self.floats_per_gene:(index+1)*self.floats_per_gene] = best + mutation
 
-    def _mutate_random(self, index):
+    def _mutate_random(self, gene):
         """Fully randomize the gene"""
-        self.vert_data[index * self.floats_per_gene:(index + 1) * self.floats_per_gene] = np.random.rand(self.floats_per_gene)
+        #self.vert_data[gene * self.floats_per_gene:(gene + 1) * self.floats_per_gene] = np.random.rand(self.floats_per_gene)
+        self.verts_by_gene[gene] = np.random.rand(self.floats_per_gene).reshape((self.tris_per_gene, 3, 6))
 
     def _mutate_crossover_1p(self, index):
         """A crossover point is randomly selected. Use parent1 gene before this point and parent2 gene after"""
-        # TODO: create second view of vert data with floats_per_gene stride
-        crossover_point = random.randint(0, self.floats_per_gene)
+       #crossover_point = random.randint(0, self.floats_per_gene)
+        crossover_point = random.randint(0, self.tris_per_gene)
         parent1 = random.randint(0, self.population_size - 1)
         parent2 = random.randint(0, self.population_size - 1)
         child = index
-        self.vert_data[child * self.floats_per_gene:(child + 1) * self.floats_per_gene - crossover_point] = \
-            self.vert_data[parent1 * self.floats_per_gene:(parent1 + 1) * self.floats_per_gene - crossover_point]
-        self.vert_data[child * self.floats_per_gene + crossover_point:(child + 1) * self.floats_per_gene] = \
-            self.vert_data[parent2 * self.floats_per_gene + crossover_point:(parent2 + 1) * self.floats_per_gene]
+        self.verts_by_gene[child][:crossover_point] = self.verts_by_gene[index][:crossover_point]
+        self.verts_by_gene[child][crossover_point:] = self.verts_by_gene[index][crossover_point:]
 
     def _mutate_crossover_random(self, index):
         """Randomly choose from parent1 and parent2 traits"""
         parent1 = random.randint(0, self.population_size - 1)
         parent2 = random.randint(0, self.population_size - 1)
-        mask    = np.random.rand(self.floats_per_gene)
-        self.vert_data[index * self.floats_per_gene:(index + 1) * self.floats_per_gene][mask > 0.5] = \
-            self.vert_data[parent1 * self.floats_per_gene:(parent1 + 1) * self.floats_per_gene][mask > 0.5]
-        self.vert_data[index * self.floats_per_gene:(index + 1) * self.floats_per_gene][mask < 0.5] = \
-            self.vert_data[parent2 * self.floats_per_gene:(parent2 + 1) * self.floats_per_gene][mask < 0.5]
+        mask    = np.random.rand(self.tris_per_gene)
+
+        self.verts_by_gene[index][mask > 0.5] = self.verts_by_gene[parent1][mask > 0.5]
+        self.verts_by_gene[index][mask < 0.5] = self.verts_by_gene[parent2][mask < 0.5]
 
     def step(self):
         # get fitness scores for population
